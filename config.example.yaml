@@ -1,0 +1,19 @@
+gateway:
+  user: gateway
+  password: "替换为网关密码"
+
+ssh:
+  office:
+    address: "192.168.1.10:22"
+    user: tunnel
+    known_hosts: ssh/known_hosts
+    password: "替换为跳板机密码"
+    # 使用私钥登录时，将上一行替换为 private_key: ssh/id_ed25519
+
+mappings:
+  A:
+    address: "mysql.internal:3306"
+    database: AA
+    user: app
+    password: "替换为目标 MySQL 密码"
+    ssh: office
