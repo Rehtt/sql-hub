@@ -122,8 +122,8 @@ func withTestJump(t *testing.T, g *gateway, r mapping, method string, mismatch b
 	if err != nil {
 		t.Fatal(err)
 	}
-	g.jumps["test"] = jump
-	r.SSH = "test"
+	g.proxies["test"] = proxyTarget{kind: proxySSH, jump: jump}
+	r.Proxy = "test"
 	return r
 }
 

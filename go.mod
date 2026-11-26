@@ -8,6 +8,7 @@ require (
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20260504140133-511dba1dbe17
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/crypto v0.58.0
+	golang.org/x/net v0.60.0
 )
 
 require (

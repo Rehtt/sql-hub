@@ -19,13 +19,15 @@ func TestConfiguredGateway(t *testing.T) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	delete(cfg, "ssh")
+	delete(cfg, "proxy")
 	cfg["gateway"].(map[string]any)["password"] = "front-secret"
 	target := cfg["mappings"].(map[string]any)["A"].(map[string]any)
 	target["address"] = r.Address
 	target["password"] = r.password
 	target["read_only"] = true
-	delete(target, "ssh")
+	for _, raw := range cfg["mappings"].(map[string]any) {
+		delete(raw.(map[string]any), "proxy")
+	}
 	path := filepath.Join(t.TempDir(), "gateway.yaml")
 	writeConfig := func() {
 		t.Helper()
@@ -52,9 +54,28 @@ func TestConfiguredGateway(t *testing.T) {
 	if err := db.QueryRow("SELECT DATABASE()").Scan(&name); err != nil || name != "AA" {
 		t.Fatalf("database=%q err=%v", name, err)
 	}
-	target["ssh"] = "unknown"
+	target["proxy"] = "unknown"
 	writeConfig()
 	if _, err := loadGateway(path); err == nil {
 		t.Fatal("accepted unknown jump host")
+	}
+}
+
+func TestProxyConfigValidation(t *testing.T) {
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		name  string
+		proxy proxyConfig
+	}{
+		{name: "unknown type", proxy: proxyConfig{Type: "http", Address: "127.0.0.1:8080"}},
+		{name: "socks invalid address", proxy: proxyConfig{Type: proxySOCKS5, Address: "127.0.0.1"}},
+		{name: "socks ssh field", proxy: proxyConfig{Type: proxySOCKS5, Address: "127.0.0.1:1080", KnownHosts: "known_hosts"}},
+		{name: "socks incomplete auth", proxy: proxyConfig{Type: proxySOCKS5, Address: "127.0.0.1:1080", User: "proxy"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := tc.proxy.build(dir); err == nil {
+				t.Fatal("accepted invalid proxy configuration")
+			}
+		})
 	}
 }

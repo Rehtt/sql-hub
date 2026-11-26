@@ -2,16 +2,24 @@ gateway:
   user: gateway
   password: "替换为网关密码"
 
-# 同一 SSH 配置名下的映射共享 SSH 连接，空闲超时后回收
+# 同一 SSH 代理配置名下的映射共享 SSH 连接，空闲超时后回收
 ssh_idle_timeout: 5m
 
-ssh:
-  office:
+proxy:
+  ssh_jump:
+    type: ssh
     address: "192.168.1.10:22"
     user: tunnel
     known_hosts: ssh/known_hosts
     password: "替换为跳板机密码"
     # 使用私钥登录时，将上一行替换为 private_key: ssh/id_ed25519
+  socks_jump:
+    type: socks5
+    address: "127.0.0.1:1080"
+    # SOCKS5 需要认证时，填写 user，并在 password 与 password_env 中选择一项
+    # user: proxy_user
+    # password: "替换为 SOCKS5 代理密码"
+    # password_env: SQLTR_SOCKS5_PASSWORD
 
 mappings:
   A:
@@ -19,6 +27,12 @@ mappings:
     database: AA
     user: app
     password: "替换为目标 MySQL 密码"
-    ssh: office
+    proxy: ssh_jump
     # 只允许读取类 SQL，网关会拦截写操作
     # read_only: true
+  B:
+    address: "mysql.internal:3306"
+    database: BB
+    user: app
+    password: "替换为目标 MySQL 密码"
+    proxy: socks_jump

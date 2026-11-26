@@ -18,7 +18,7 @@ const connectTimeout = 10 * time.Second
 
 type backend struct {
 	*client.Conn
-	transport net.Conn // TCP connection to MySQL or the dedicated SSH channel
+	transport net.Conn // TCP connection to MySQL or the proxy connection
 	release   func()
 	closeOnce sync.Once
 }
@@ -44,9 +44,9 @@ func (g *gateway) acquireSSH(ctx context.Context, name string) (*ssh.Client, fun
 		g.sshPool = make(map[string]*sharedSSH)
 	}
 
-	jump, ok := g.jumps[name]
-	if !ok {
-		return nil, nil, fmt.Errorf("unknown ssh host %q", name)
+	proxy, ok := g.proxies[name]
+	if !ok || proxy.kind != proxySSH {
+		return nil, nil, fmt.Errorf("unknown ssh proxy %q", name)
 	}
 	if shared := g.sshPool[name]; shared != nil {
 		if shared.idleTimer != nil {
@@ -58,7 +58,7 @@ func (g *gateway) acquireSSH(ctx context.Context, name string) (*ssh.Client, fun
 	}
 
 	var dialer net.Dialer
-	transport, err := dialer.DialContext(ctx, "tcp", jump.address)
+	transport, err := dialer.DialContext(ctx, "tcp", proxy.jump.address)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -67,7 +67,7 @@ func (g *gateway) acquireSSH(ctx context.Context, name string) (*ssh.Client, fun
 		_ = transport.Close()
 		return nil, nil, err
 	}
-	conn, chans, reqs, err := ssh.NewClientConn(transport, jump.address, jump.config)
+	conn, chans, reqs, err := ssh.NewClientConn(transport, proxy.jump.address, proxy.jump.config)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -122,15 +122,28 @@ func (g *gateway) connect(r mapping, front *server.Conn, settings sessionSetting
 	var target net.Conn
 	var release func()
 	var err error
-	if r.SSH != "" {
-		client, releaseSSH, err := g.acquireSSH(ctx, r.SSH)
-		if err != nil {
-			return nil, err
+	if r.Proxy != "" {
+		proxy, ok := g.proxies[r.Proxy]
+		if !ok {
+			return nil, fmt.Errorf("unknown proxy %q", r.Proxy)
 		}
-		release = releaseSSH
-		target, err = client.DialContext(ctx, "tcp", r.Address)
+		switch proxy.kind {
+		case proxySSH:
+			client, releaseSSH, err := g.acquireSSH(ctx, r.Proxy)
+			if err != nil {
+				return nil, err
+			}
+			release = releaseSSH
+			target, err = client.DialContext(ctx, "tcp", r.Address)
+		case proxySOCKS5:
+			target, err = proxy.socks.DialContext(ctx, "tcp", r.Address)
+		default:
+			return nil, fmt.Errorf("unsupported proxy type %q", proxy.kind)
+		}
 		if err != nil {
-			release()
+			if release != nil {
+				release()
+			}
 			return nil, err
 		}
 	} else {
@@ -156,7 +169,7 @@ func (g *gateway) connect(r mapping, front *server.Conn, settings sessionSetting
 		}
 	}()
 	deadline, _ := ctx.Deadline()
-	if r.SSH == "" {
+	if r.Proxy == "" || g.proxies[r.Proxy].kind == proxySOCKS5 {
 		if err := target.SetDeadline(deadline); err != nil {
 			return nil, err
 		}
@@ -191,7 +204,7 @@ func (g *gateway) connect(r mapping, front *server.Conn, settings sessionSetting
 			return nil, fmt.Errorf("initialize database session: %w", err)
 		}
 	}
-	if r.SSH == "" {
+	if r.Proxy == "" || g.proxies[r.Proxy].kind == proxySOCKS5 {
 		if err := target.SetDeadline(time.Time{}); err != nil {
 			return nil, err
 		}
