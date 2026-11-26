@@ -2,6 +2,9 @@ gateway:
   user: gateway
   password: "替换为网关密码"
 
+# 同一 SSH 配置名下的映射共享 SSH 连接，空闲超时后回收
+ssh_idle_timeout: 5m
+
 ssh:
   office:
     address: "192.168.1.10:22"
@@ -17,3 +20,5 @@ mappings:
     user: app
     password: "替换为目标 MySQL 密码"
     ssh: office
+    # 只允许读取类 SQL，网关会拦截写操作
+    # read_only: true

@@ -24,6 +24,7 @@ func TestConfiguredGateway(t *testing.T) {
 	target := cfg["mappings"].(map[string]any)["A"].(map[string]any)
 	target["address"] = r.Address
 	target["password"] = r.password
+	target["read_only"] = true
 	delete(target, "ssh")
 	path := filepath.Join(t.TempDir(), "gateway.yaml")
 	writeConfig := func() {
@@ -40,6 +41,9 @@ func TestConfiguredGateway(t *testing.T) {
 	g, err := loadGateway(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !g.routes["A"].ReadOnly {
+		t.Fatal("read_only mapping option was not loaded")
 	}
 	addr := listenTest(t, g.serve)
 	wantCode(t, openDB(t, addr, "A", "wrong").Ping(), mysql.ER_ACCESS_DENIED_ERROR)

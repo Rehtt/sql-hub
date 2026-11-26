@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/server"
@@ -34,6 +36,7 @@ type mapping struct {
 	Address  string `yaml:"address"`
 	Database string `yaml:"database"`
 	SSH      string `yaml:"ssh"`
+	ReadOnly bool   `yaml:"read_only,omitempty"`
 	password string
 }
 
@@ -42,18 +45,31 @@ type jumpHost struct {
 	config  *ssh.ClientConfig
 }
 
+type sharedSSH struct {
+	client    *ssh.Client
+	refs      int
+	idleTimer *time.Timer
+}
+
+const defaultSSHIdleTimeout = 5 * time.Minute
+
 type gateway struct {
-	server *server.Server
-	auth   *server.InMemoryAuthenticationHandler
-	routes map[string]mapping
-	jumps  map[string]jumpHost
+	server         *server.Server
+	auth           *server.InMemoryAuthenticationHandler
+	routes         map[string]mapping
+	jumps          map[string]jumpHost
+	sshMu          sync.Mutex
+	sshPool        map[string]*sharedSSH
+	sshIdleTimeout time.Duration
 }
 
 func newGateway() *gateway {
 	return &gateway{
-		server: server.NewServer("8.0.11-sql-tr", mysql.DEFAULT_COLLATION_ID, mysql.AUTH_NATIVE_PASSWORD, nil, nil),
-		auth:   server.NewInMemoryAuthenticationHandler(mysql.AUTH_NATIVE_PASSWORD),
-		jumps:  make(map[string]jumpHost),
+		server:         server.NewServer("8.0.11-sqlG", mysql.DEFAULT_COLLATION_ID, mysql.AUTH_NATIVE_PASSWORD, nil, nil),
+		auth:           server.NewInMemoryAuthenticationHandler(mysql.AUTH_NATIVE_PASSWORD),
+		jumps:          make(map[string]jumpHost),
+		sshPool:        make(map[string]*sharedSSH),
+		sshIdleTimeout: defaultSSHIdleTimeout,
 	}
 }
 
@@ -125,9 +141,10 @@ func loadGateway(path string) (*gateway, error) {
 	}
 	defer f.Close()
 	var cfg struct {
-		Gateway  account               `yaml:"gateway"`
-		SSH      map[string]jumpConfig `yaml:"ssh"`
-		Mappings map[string]mapping    `yaml:"mappings"`
+		Gateway        account               `yaml:"gateway"`
+		SSH            map[string]jumpConfig `yaml:"ssh"`
+		Mappings       map[string]mapping    `yaml:"mappings"`
+		SSHIdleTimeout *string               `yaml:"ssh_idle_timeout"`
 	}
 	dec := yaml.NewDecoder(f)
 	dec.KnownFields(true)
@@ -143,8 +160,19 @@ func loadGateway(path string) (*gateway, error) {
 	if len(cfg.Mappings) == 0 {
 		return nil, errors.New("at least one database mapping is required")
 	}
+	sshIdleTimeout := defaultSSHIdleTimeout
+	if cfg.SSHIdleTimeout != nil {
+		sshIdleTimeout, err = time.ParseDuration(*cfg.SSHIdleTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("ssh_idle_timeout: %w", err)
+		}
+		if sshIdleTimeout <= 0 {
+			return nil, errors.New("ssh_idle_timeout must be positive")
+		}
+	}
 
 	g := newGateway()
+	g.sshIdleTimeout = sshIdleTimeout
 	password, err := cfg.Gateway.passwordValue()
 	if err != nil {
 		return nil, fmt.Errorf("gateway: %w", err)

@@ -137,6 +137,14 @@ func (s *session) command(data []byte) error {
 		}
 		return s.front.WriteValue(mysql.NewDefaultError(mysql.ER_NO_DB_ERROR))
 	}
+	if s.gateway.routes[s.alias].ReadOnly {
+		switch data[0] {
+		case mysql.COM_QUERY, mysql.COM_STMT_PREPARE:
+			if !readOnlyStatementAllowed(payload) {
+				return s.front.WriteValue(mysql.NewDefaultError(mysql.ER_OPTION_PREVENTS_STATEMENT, "--read-only"))
+			}
+		}
+	}
 	switch data[0] {
 	case mysql.COM_QUERY, mysql.COM_INIT_DB, mysql.COM_FIELD_LIST, mysql.COM_PING,
 		mysql.COM_STMT_PREPARE, mysql.COM_STMT_EXECUTE, mysql.COM_STMT_SEND_LONG_DATA,
